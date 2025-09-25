@@ -3,7 +3,7 @@
 import type React from "react"
 
 import { useState, useEffect, useRef } from "react"
-import { useParams } from "next/navigation"
+import { useParams, useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -12,7 +12,7 @@ import { Badge } from "@/components/ui/badge"
 import { getOrCreateClientId } from "@/lib/client-id"
 import { getSocket, disconnectSocket } from "@/lib/socket"
 import { WebRTCManager, type MediaFile, type Participant } from "@/lib/webrtc"
-import { Upload, Download, ImageIcon, Video, Users, VideoIcon, VideoOff, Mic, MicOff } from "lucide-react"
+import { Upload, Download, ImageIcon, Video, Users, VideoIcon, VideoOff, Mic, MicOff, Copy } from "lucide-react"
 
 interface Message {
   id: string
@@ -25,7 +25,23 @@ interface Message {
 
 export default function RoomPage() {
   const params = useParams()
-  const roomId = params.id as string
+  const searchParams = useSearchParams()
+
+  const getRoomId = () => {
+    const paramRoomId = params.id as string
+    const queryRoomId = searchParams.get("room")
+
+    // If no room ID in URL, generate one and update URL
+    if (!paramRoomId && !queryRoomId) {
+      const newRoomId = crypto.randomUUID()
+      window.history.replaceState({}, "", `/room/${newRoomId}`)
+      return newRoomId
+    }
+
+    return paramRoomId || queryRoomId || crypto.randomUUID()
+  }
+
+  const roomId = getRoomId()
   const [messages, setMessages] = useState<Message[]>([])
   const [newMessage, setNewMessage] = useState("")
   const [isConnected, setIsConnected] = useState(false)
@@ -35,6 +51,7 @@ export default function RoomPage() {
   const [localStream, setLocalStream] = useState<MediaStream | null>(null)
   const [isVideoEnabled, setIsVideoEnabled] = useState(false)
   const [isAudioEnabled, setIsAudioEnabled] = useState(false)
+  const [showShareableLink, setShowShareableLink] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const localVideoRef = useRef<HTMLVideoElement>(null)
@@ -49,12 +66,14 @@ export default function RoomPage() {
 
     const socket = getSocket()
 
+    console.log(`[v0] Attempting to join room: ${roomId} with clientId: ${clientId}`)
     socket.emit("join-room", { roomId, clientId, displayName: `User ${clientId.slice(0, 8)}` })
-    console.log(`[v0] Joining room: ${roomId} with clientId: ${clientId}`)
 
     socket.on("connect", () => {
       setIsConnected(true)
       console.log("[v0] Connected to server")
+      // Re-emit join-room on reconnection to ensure proper room joining
+      socket.emit("join-room", { roomId, clientId, displayName: `User ${clientId.slice(0, 8)}` })
     })
 
     socket.on("disconnect", () => {
@@ -86,6 +105,7 @@ export default function RoomPage() {
         setMessages((prev) => [...prev, message])
       },
       (updatedParticipants: Participant[]) => {
+        console.log("[v0] Participants updated:", updatedParticipants.length)
         setParticipants(updatedParticipants)
       },
     )
@@ -251,6 +271,13 @@ export default function RoomPage() {
     return null
   }
 
+  const copyRoomLink = () => {
+    const link = `${window.location.origin}/room/${roomId}`
+    navigator.clipboard.writeText(link)
+    setShowShareableLink(true)
+    setTimeout(() => setShowShareableLink(false), 2000)
+  }
+
   return (
     <div className="min-h-screen bg-white">
       <header className="bg-[#4B2E2E] text-white p-4">
@@ -263,6 +290,16 @@ export default function RoomPage() {
                 <Users className="w-4 h-4" />
                 <span className="text-sm">{participants.length + 1} participants</span>
               </div>
+              <Button
+                onClick={copyRoomLink}
+                variant="outline"
+                size="sm"
+                className="border-white text-white hover:bg-white hover:text-[#4B2E2E] bg-transparent text-xs"
+                title="Copy room link"
+              >
+                <Copy className="w-3 h-3 mr-1" />
+                {showShareableLink ? "Copied!" : "Share"}
+              </Button>
             </div>
             {process.env.NODE_ENV === "development" && clientId && (
               <p className="text-xs text-gray-300">Client: {clientId.slice(0, 8)}...</p>
