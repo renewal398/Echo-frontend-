@@ -109,6 +109,8 @@ export default function RoomPage() {
         setParticipants(updatedParticipants)
       },
     )
+
+    manager.setClientId(clientId)
     setWebrtcManager(manager)
 
     return () => {
