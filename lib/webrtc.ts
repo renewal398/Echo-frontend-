@@ -23,6 +23,7 @@ export class WebRTCManager {
   private onParticipantUpdate?: (participants: Participant[]) => void
   private participants: Map<string, Participant> = new Map()
   private socket: any
+  private clientId = ""
 
   constructor(
     socket: any,
@@ -35,11 +36,17 @@ export class WebRTCManager {
     this.setupSocketListeners()
   }
 
+  setClientId(clientId: string) {
+    this.clientId = clientId
+  }
+
   private setupSocketListeners() {
     this.socket.on("user-joined", (data: { clientId: string; displayName: string }) => {
       console.log("[v0] User joined:", data.clientId)
-      this.addParticipant(data.clientId, data.displayName)
-      setTimeout(() => this.createPeerConnection(data.clientId, true), 100)
+      if (data.clientId !== this.clientId) {
+        this.addParticipant(data.clientId, data.displayName)
+        setTimeout(() => this.createPeerConnection(data.clientId, true), 500)
+      }
     })
 
     this.socket.on("user-left", (data: { clientId: string }) => {
@@ -66,8 +73,8 @@ export class WebRTCManager {
       console.log("[v0] Received participants list:", participants)
       this.updateParticipantsList(participants)
       participants.forEach((p) => {
-        if (!this.peerConnections.has(p.clientId)) {
-          setTimeout(() => this.createPeerConnection(p.clientId, true), 200)
+        if (p.clientId !== this.clientId && !this.peerConnections.has(p.clientId)) {
+          setTimeout(() => this.createPeerConnection(p.clientId, true), 300)
         }
       })
     })
@@ -102,11 +109,13 @@ export class WebRTCManager {
   private updateParticipantsList(participants: Array<{ clientId: string; displayName: string }>) {
     this.participants.clear()
     participants.forEach((p) => {
-      this.participants.set(p.clientId, {
-        clientId: p.clientId,
-        displayName: p.displayName,
-        isConnected: true,
-      })
+      if (p.clientId !== this.clientId) {
+        this.participants.set(p.clientId, {
+          clientId: p.clientId,
+          displayName: p.displayName,
+          isConnected: true,
+        })
+      }
     })
     this.notifyParticipantUpdate()
   }
@@ -136,6 +145,7 @@ export class WebRTCManager {
     this.peerConnections.set(remoteClientId, pc)
 
     if (this.localStream) {
+      console.log("[v0] Adding local stream tracks to peer connection:", remoteClientId)
       this.localStream.getTracks().forEach((track) => {
         pc.addTrack(track, this.localStream!)
       })
@@ -144,7 +154,7 @@ export class WebRTCManager {
     pc.ontrack = (event) => {
       console.log("[v0] Received remote stream from:", remoteClientId)
       const participant = this.participants.get(remoteClientId)
-      if (participant) {
+      if (participant && event.streams[0]) {
         participant.stream = event.streams[0]
         this.notifyParticipantUpdate()
       }
@@ -163,11 +173,11 @@ export class WebRTCManager {
       console.log("[v0] Connection state with", remoteClientId, ":", pc.connectionState)
       if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
         setTimeout(() => {
-          if (this.participants.has(remoteClientId)) {
-            this.removeParticipant(remoteClientId)
+          if (this.participants.has(remoteClientId) && !this.peerConnections.has(remoteClientId)) {
+            console.log("[v0] Attempting to reconnect to:", remoteClientId)
             this.createPeerConnection(remoteClientId, true)
           }
-        }, 1000)
+        }, 2000)
       }
     }
 
@@ -210,6 +220,10 @@ export class WebRTCManager {
     dataChannel.onerror = (error) => {
       console.error("[v0] Data channel error:", error)
     }
+
+    dataChannel.onclose = () => {
+      console.log("[v0] Data channel closed with:", remoteClientId)
+    }
   }
 
   private async handleOffer(from: string, offer: RTCSessionDescriptionInit) {
@@ -228,6 +242,7 @@ export class WebRTCManager {
         to: from,
         answer: answer,
       })
+      console.log("[v0] Sent answer to:", from)
     } catch (error) {
       console.error("[v0] Error handling offer:", error)
     }
@@ -238,6 +253,7 @@ export class WebRTCManager {
     if (pc) {
       try {
         await pc.setRemoteDescription(answer)
+        console.log("[v0] Set remote description for answer from:", from)
       } catch (error) {
         console.error("[v0] Error handling answer:", error)
       }
@@ -246,7 +262,7 @@ export class WebRTCManager {
 
   private async handleIceCandidate(from: string, candidate: RTCIceCandidateInit) {
     const pc = this.peerConnections.get(from)
-    if (pc) {
+    if (pc && pc.remoteDescription) {
       try {
         await pc.addIceCandidate(candidate)
       } catch (error) {
@@ -262,7 +278,8 @@ export class WebRTCManager {
         audio: true,
       })
 
-      this.peerConnections.forEach((pc) => {
+      this.peerConnections.forEach((pc, clientId) => {
+        console.log("[v0] Adding local stream tracks to existing connection:", clientId)
         this.localStream!.getTracks().forEach((track) => {
           pc.addTrack(track, this.localStream!)
         })
@@ -317,6 +334,14 @@ export class WebRTCManager {
 
     const messageStr = JSON.stringify(fileMessage)
     let sentCount = 0
+    const openChannels = Array.from(this.dataChannels.values()).filter((dc) => dc.readyState === "open")
+
+    console.log(
+      "[v0] Attempting to send file. Total channels:",
+      this.dataChannels.size,
+      "Open channels:",
+      openChannels.length,
+    )
 
     this.dataChannels.forEach((dataChannel, clientId) => {
       if (dataChannel.readyState === "open") {
@@ -333,7 +358,7 @@ export class WebRTCManager {
     })
 
     if (sentCount === 0) {
-      const errorMsg = `No connected peers to send file to. Connected channels: ${this.dataChannels.size}, Open channels: ${Array.from(this.dataChannels.values()).filter((dc) => dc.readyState === "open").length}`
+      const errorMsg = `No connected peers to send file to. Connected channels: ${this.dataChannels.size}, Open channels: ${openChannels.length}`
       console.error("[v0] Error sending file:", errorMsg)
       throw new Error(errorMsg)
     }
