@@ -1,7 +1,7 @@
 "use client"
 
-import { useState } from "react"
-import { useRouter } from "next/navigation"
+import { useState, useEffect } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -13,11 +13,23 @@ export default function HomePage() {
   const [generatedRoomId, setGeneratedRoomId] = useState("")
   const [showShareableLink, setShowShareableLink] = useState(false)
   const router = useRouter()
+  const searchParams = useSearchParams()
+
+  useEffect(() => {
+    const urlRoomId = searchParams.get("room")
+    if (urlRoomId) {
+      // If there's a room ID in the URL, automatically navigate to that room
+      router.push(`/room/${urlRoomId}`)
+    }
+  }, [searchParams, router])
 
   const createRoom = () => {
     const newRoomId = crypto.randomUUID()
     setGeneratedRoomId(newRoomId)
     setShowShareableLink(true)
+
+    const newUrl = `${window.location.origin}?room=${newRoomId}`
+    window.history.pushState({}, "", `?room=${newRoomId}`)
   }
 
   const joinRoom = () => {
@@ -33,7 +45,7 @@ export default function HomePage() {
   }
 
   const copyLink = () => {
-    const link = `${window.location.origin}/room/${generatedRoomId}`
+    const link = `${window.location.origin}?room=${generatedRoomId}`
     navigator.clipboard.writeText(link)
   }
 
@@ -54,7 +66,9 @@ export default function HomePage() {
             {showShareableLink && (
               <div className="p-3 bg-gray-50 rounded-md space-y-2">
                 <p className="text-sm text-gray-700 font-medium">Room created!</p>
-                <p className="text-xs text-gray-600 break-all">/room/{generatedRoomId}</p>
+                <p className="text-xs text-gray-600 break-all">
+                  {window.location.origin}?room={generatedRoomId}
+                </p>
                 <div className="flex gap-2">
                   <Button onClick={copyLink} variant="outline" size="sm" className="text-xs bg-transparent">
                     Copy Link
