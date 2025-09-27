@@ -293,100 +293,117 @@ export class WebRTCManager {
     }
   }
 
-  async startLocalVideo(): Promise<MediaStream | null> {
+  async startLocalAudio(): Promise<MediaStream | null> {
     try {
-      this.localStream = await navigator.mediaDevices.getUserMedia({
-        video: true,
+      const audioStream = await navigator.mediaDevices.getUserMedia({
+        video: false,
         audio: true,
       })
 
+      // If we already have a video stream, combine them
+      if (this.localStream) {
+        const videoTracks = this.localStream.getVideoTracks()
+        const audioTracks = audioStream.getAudioTracks()
+
+        // Create combined stream
+        const combinedStream = new MediaStream([...videoTracks, ...audioTracks])
+
+        // Stop old audio tracks if any
+        this.localStream.getAudioTracks().forEach((track) => track.stop())
+
+        this.localStream = combinedStream
+      } else {
+        this.localStream = audioStream
+      }
+
+      // Add tracks to existing peer connections
       this.peerConnections.forEach((pc, clientId) => {
-        console.log("[v0] Adding local stream tracks to existing connection:", clientId)
-        this.localStream!.getTracks().forEach((track) => {
+        console.log("[v0] Adding audio tracks to existing connection:", clientId)
+        audioStream.getAudioTracks().forEach((track) => {
           pc.addTrack(track, this.localStream!)
         })
       })
 
       return this.localStream
     } catch (error) {
-      console.error("[v0] Error accessing media devices:", error)
+      console.error("[v0] Error accessing microphone:", error)
       return null
+    }
+  }
+
+  async startLocalVideo(): Promise<MediaStream | null> {
+    try {
+      const videoStream = await navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: false,
+      })
+
+      // If we already have an audio stream, combine them
+      if (this.localStream) {
+        const audioTracks = this.localStream.getAudioTracks()
+        const videoTracks = videoStream.getVideoTracks()
+
+        // Create combined stream
+        const combinedStream = new MediaStream([...audioTracks, ...videoTracks])
+
+        // Stop old video tracks if any
+        this.localStream.getVideoTracks().forEach((track) => track.stop())
+
+        this.localStream = combinedStream
+      } else {
+        this.localStream = videoStream
+      }
+
+      // Add tracks to existing peer connections
+      this.peerConnections.forEach((pc, clientId) => {
+        console.log("[v0] Adding video tracks to existing connection:", clientId)
+        videoStream.getVideoTracks().forEach((track) => {
+          pc.addTrack(track, this.localStream!)
+        })
+      })
+
+      return this.localStream
+    } catch (error) {
+      console.error("[v0] Error accessing camera:", error)
+      return null
+    }
+  }
+
+  stopLocalAudio() {
+    if (this.localStream) {
+      const audioTracks = this.localStream.getAudioTracks()
+      audioTracks.forEach((track) => track.stop())
+
+      // If we still have video tracks, keep the stream with only video
+      const videoTracks = this.localStream.getVideoTracks()
+      if (videoTracks.length > 0) {
+        this.localStream = new MediaStream(videoTracks)
+      } else {
+        this.localStream = null
+      }
     }
   }
 
   stopLocalVideo() {
     if (this.localStream) {
+      const videoTracks = this.localStream.getVideoTracks()
+      videoTracks.forEach((track) => track.stop())
+
+      // If we still have audio tracks, keep the stream with only audio
+      const audioTracks = this.localStream.getAudioTracks()
+      if (audioTracks.length > 0) {
+        this.localStream = new MediaStream(audioTracks)
+      } else {
+        this.localStream = null
+      }
+    }
+  }
+
+  stopAllMedia() {
+    if (this.localStream) {
       this.localStream.getTracks().forEach((track) => track.stop())
       this.localStream = null
     }
-  }
-
-  private handleDataChannelMessage(data: string) {
-    try {
-      const message = JSON.parse(data)
-      if (message.type === "file" && this.onFileReceived) {
-        const fileData: MediaFile = {
-          id: message.id,
-          name: message.name,
-          type: message.fileType,
-          size: message.size,
-          data: new Uint8Array(message.data).buffer,
-          timestamp: new Date(message.timestamp),
-          sender: message.sender,
-        }
-        this.onFileReceived(fileData)
-      }
-    } catch (error) {
-      console.error("[v0] Error parsing data channel message:", error)
-    }
-  }
-
-  async sendFile(file: File, sender: string): Promise<void> {
-    const arrayBuffer = await file.arrayBuffer()
-    const fileMessage = {
-      type: "file",
-      id: crypto.randomUUID(),
-      name: file.name,
-      fileType: file.type,
-      size: file.size,
-      data: Array.from(new Uint8Array(arrayBuffer)),
-      timestamp: new Date().toISOString(),
-      sender,
-    }
-
-    const messageStr = JSON.stringify(fileMessage)
-    let sentCount = 0
-    const openChannels = Array.from(this.dataChannels.values()).filter((dc) => dc.readyState === "open")
-
-    console.log(
-      "[v0] Attempting to send file. Total channels:",
-      this.dataChannels.size,
-      "Open channels:",
-      openChannels.length,
-    )
-
-    this.dataChannels.forEach((dataChannel, clientId) => {
-      console.log("[v0] Channel state for", clientId, ":", dataChannel.readyState)
-      if (dataChannel.readyState === "open") {
-        try {
-          dataChannel.send(messageStr)
-          console.log("[v0] File sent to:", clientId)
-          sentCount++
-        } catch (error) {
-          console.error("[v0] Error sending file to", clientId, ":", error)
-        }
-      } else {
-        console.log("[v0] Data channel not ready for:", clientId, "state:", dataChannel.readyState)
-      }
-    })
-
-    if (sentCount === 0) {
-      const errorMsg = `No connected peers to send file to. Connected channels: ${this.dataChannels.size}, Open channels: ${openChannels.length}`
-      console.error("[v0] Error sending file:", errorMsg)
-      throw new Error(errorMsg)
-    }
-
-    console.log("[v0] File sent to", sentCount, "peers")
   }
 
   getParticipants(): Participant[] {
@@ -394,7 +411,7 @@ export class WebRTCManager {
   }
 
   cleanup() {
-    this.stopLocalVideo()
+    this.stopAllMedia()
 
     this.dataChannels.forEach((dc) => dc.close())
     this.dataChannels.clear()
