@@ -159,7 +159,14 @@ export class WebRTCManager {
         { urls: "stun:stun.l.google.com:19302" },
         { urls: "stun:stun1.l.google.com:19302" },
         { urls: "stun:stun2.l.google.com:19302" },
+        { urls: "stun:stun3.l.google.com:19302" },
+        { urls: "stun:stun4.l.google.com:19302" },
+        { urls: "stun:stun.services.mozilla.com" },
+        { urls: "stun:stun.cloudflare.com:3478" },
       ],
+      iceCandidatePoolSize: 10,
+      bundlePolicy: "max-bundle",
+      rtcpMuxPolicy: "require",
     })
 
     this.peerConnections.set(remoteClientId, pc)
@@ -297,7 +304,14 @@ export class WebRTCManager {
     try {
       const audioStream = await navigator.mediaDevices.getUserMedia({
         video: false,
-        audio: true,
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          sampleRate: 48000,
+          channelCount: 1,
+          latency: 0.01, // Low latency for real-time
+        },
       })
 
       // If we already have a video stream, combine them
@@ -334,7 +348,12 @@ export class WebRTCManager {
   async startLocalVideo(): Promise<MediaStream | null> {
     try {
       const videoStream = await navigator.mediaDevices.getUserMedia({
-        video: true,
+        video: {
+          width: { ideal: 640, max: 1280 },
+          height: { ideal: 480, max: 720 },
+          frameRate: { ideal: 30, max: 30 },
+          facingMode: "user",
+        },
         audio: false,
       })
 
@@ -408,6 +427,10 @@ export class WebRTCManager {
 
   getParticipants(): Participant[] {
     return Array.from(this.participants.values())
+  }
+
+  getLocalStream(): MediaStream | null {
+    return this.localStream
   }
 
   cleanup() {
