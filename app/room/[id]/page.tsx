@@ -67,29 +67,6 @@ export default function RoomPage() {
     const socket = getSocket()
 
     console.log(`[v0] Attempting to join room: ${roomId} with clientId: ${clientId}`)
-    socket.emit("join-room", { roomId, clientId, displayName: `User ${clientId.slice(0, 8)}` })
-
-    socket.on("connect", () => {
-      setIsConnected(true)
-      console.log("[v0] Connected to server")
-      // Re-emit join-room on reconnection to ensure proper room joining
-      socket.emit("join-room", { roomId, clientId, displayName: `User ${clientId.slice(0, 8)}` })
-    })
-
-    socket.on("disconnect", () => {
-      setIsConnected(false)
-      console.log("[v0] Disconnected from server")
-    })
-
-    socket.on("chat-message", (data) => {
-      const message: Message = {
-        id: crypto.randomUUID(),
-        text: data.message,
-        timestamp: new Date(data.timestamp),
-        sender: data.sender === clientId ? "You" : `User ${data.sender.slice(0, 8)}`,
-      }
-      setMessages((prev) => [...prev, message])
-    })
 
     const manager = new WebRTCManager(
       socket,
@@ -113,6 +90,31 @@ export default function RoomPage() {
     manager.setClientId(clientId)
     setWebrtcManager(manager)
 
+    socket.emit("join-room", { roomId, clientId, displayName: `User ${clientId.slice(0, 8)}` })
+
+    socket.on("connect", () => {
+      setIsConnected(true)
+      console.log("[v0] Connected to server")
+      // Re-emit join-room on reconnection to ensure proper room joining
+      socket.emit("join-room", { roomId, clientId, displayName: `User ${clientId.slice(0, 8)}` })
+    })
+
+    socket.on("disconnect", () => {
+      setIsConnected(false)
+      console.log("[v0] Disconnected from server")
+    })
+
+    socket.on("receive-message", (data) => {
+      console.log("[v0] Received message:", data)
+      const message: Message = {
+        id: crypto.randomUUID(),
+        text: data.message,
+        timestamp: new Date(data.timestamp || Date.now()),
+        sender: data.clientId === clientId ? "You" : `User ${data.clientId.slice(0, 8)}`,
+      }
+      setMessages((prev) => [...prev, message])
+    })
+
     return () => {
       socket.emit("leave-room", { roomId, clientId })
       console.log(`[v0] Leaving room: ${roomId} with clientId: ${clientId}`)
@@ -134,21 +136,14 @@ export default function RoomPage() {
   const sendMessage = () => {
     if (newMessage.trim()) {
       const socket = getSocket()
-      socket.emit("chat-message", {
+
+      socket.emit("send-message", {
         roomId,
         clientId,
         message: newMessage.trim(),
         timestamp: new Date().toISOString(),
       })
 
-      const message: Message = {
-        id: crypto.randomUUID(),
-        text: newMessage.trim(),
-        timestamp: new Date(),
-        sender: "You",
-      }
-
-      setMessages((prev) => [...prev, message])
       setNewMessage("")
     }
   }
@@ -200,6 +195,8 @@ export default function RoomPage() {
     if (!file || !webrtcManager) return
 
     try {
+      console.log("[v0] Attempting to send file. Total channels:", webrtcManager.getParticipants().length)
+
       await webrtcManager.sendFile(file, clientId)
 
       const message: Message = {
@@ -221,6 +218,9 @@ export default function RoomPage() {
       setMessages((prev) => [...prev, message])
     } catch (error) {
       console.error("[v0] Error sending file:", error)
+      alert(
+        `Failed to send file: ${error instanceof Error ? error.message : "Unknown error"}. Make sure other users are connected to the room.`,
+      )
     }
 
     if (fileInputRef.current) {
