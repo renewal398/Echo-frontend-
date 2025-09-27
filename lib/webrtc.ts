@@ -45,13 +45,25 @@ export class WebRTCManager {
       console.log("[v0] User joined:", data.clientId)
       if (data.clientId !== this.clientId) {
         this.addParticipant(data.clientId, data.displayName)
-        setTimeout(() => this.createPeerConnection(data.clientId, true), 500)
+        setTimeout(() => this.createPeerConnection(data.clientId, true), 2000)
       }
     })
 
     this.socket.on("user-left", (data: { clientId: string }) => {
       console.log("[v0] User left:", data.clientId)
       this.removeParticipant(data.clientId)
+    })
+
+    this.socket.on("signal", async (data: { from: string; signal: any }) => {
+      console.log("[v0] Received signal from:", data.from, "type:", data.signal.type)
+
+      if (data.signal.type === "offer") {
+        await this.handleOffer(data.from, data.signal)
+      } else if (data.signal.type === "answer") {
+        await this.handleAnswer(data.from, data.signal)
+      } else if (data.signal.candidate) {
+        await this.handleIceCandidate(data.from, data.signal)
+      }
     })
 
     this.socket.on("webrtc-offer", async (data: { from: string; offer: RTCSessionDescriptionInit }) => {
@@ -72,9 +84,17 @@ export class WebRTCManager {
     this.socket.on("participants-list", (participants: Array<{ clientId: string; displayName: string }>) => {
       console.log("[v0] Received participants list:", participants)
       this.updateParticipantsList(participants)
-      participants.forEach((p) => {
-        if (p.clientId !== this.clientId && !this.peerConnections.has(p.clientId)) {
-          setTimeout(() => this.createPeerConnection(p.clientId, true), 300)
+      const otherParticipants = participants.filter((p) => p.clientId !== this.clientId)
+      console.log("[v0] Other participants to connect to:", otherParticipants.length)
+
+      otherParticipants.forEach((p) => {
+        if (!this.peerConnections.has(p.clientId)) {
+          setTimeout(() => {
+            if (!this.peerConnections.has(p.clientId)) {
+              console.log("[v0] Creating delayed connection to:", p.clientId)
+              this.createPeerConnection(p.clientId, true)
+            }
+          }, 1000)
         }
       })
     })
@@ -166,6 +186,11 @@ export class WebRTCManager {
           to: remoteClientId,
           candidate: event.candidate.toJSON(),
         })
+
+        this.socket.emit("signal", {
+          to: remoteClientId,
+          signal: event.candidate.toJSON(),
+        })
       }
     }
 
@@ -182,29 +207,20 @@ export class WebRTCManager {
     }
 
     if (isInitiator) {
-      const dataChannel = pc.createDataChannel("fileTransfer", { ordered: true })
-      this.setupDataChannel(dataChannel, remoteClientId)
-      this.dataChannels.set(remoteClientId, dataChannel)
+      try {
+        const dataChannel = pc.createDataChannel("fileTransfer", { ordered: true })
+        this.setupDataChannel(dataChannel, remoteClientId)
+        this.dataChannels.set(remoteClientId, dataChannel)
+        console.log("[v0] Created data channel for:", remoteClientId)
+      } catch (error) {
+        console.error("[v0] Error creating data channel:", error)
+      }
     }
 
     pc.ondatachannel = (event) => {
       console.log("[v0] Received data channel from:", remoteClientId)
       this.setupDataChannel(event.channel, remoteClientId)
       this.dataChannels.set(remoteClientId, event.channel)
-    }
-
-    if (isInitiator) {
-      try {
-        const offer = await pc.createOffer()
-        await pc.setLocalDescription(offer)
-        this.socket.emit("webrtc-offer", {
-          to: remoteClientId,
-          offer: offer,
-        })
-        console.log("[v0] Sent offer to:", remoteClientId)
-      } catch (error) {
-        console.error("[v0] Error creating offer:", error)
-      }
     }
   }
 
@@ -242,6 +258,12 @@ export class WebRTCManager {
         to: from,
         answer: answer,
       })
+
+      this.socket.emit("signal", {
+        to: from,
+        signal: answer,
+      })
+
       console.log("[v0] Sent answer to:", from)
     } catch (error) {
       console.error("[v0] Error handling offer:", error)
@@ -344,6 +366,7 @@ export class WebRTCManager {
     )
 
     this.dataChannels.forEach((dataChannel, clientId) => {
+      console.log("[v0] Channel state for", clientId, ":", dataChannel.readyState)
       if (dataChannel.readyState === "open") {
         try {
           dataChannel.send(messageStr)
