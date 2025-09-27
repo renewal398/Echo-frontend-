@@ -9,7 +9,10 @@ import "./globals.css"
 export const metadata: Metadata = {
   title: "Echo - WebRTC Room App",
   description: "Real-time video chat and file sharing",
-  generator: "v0.app",
+  other: {
+    screenshot: "disabled",
+    "screen-capture": "disabled",
+  },
 }
 
 export default function RootLayout({
@@ -19,6 +22,47 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
+      <head>
+        <meta name="screenshot" content="disabled" />
+        <meta name="screen-capture" content="disabled" />
+        <meta name="format-detection" content="telephone=no" />
+        <style
+          dangerouslySetInnerHTML={{
+            __html: `
+            /* Prevent screenshot and screen recording */
+            * {
+              -webkit-touch-callout: none;
+              -webkit-user-select: none;
+              -khtml-user-select: none;
+              -moz-user-select: none;
+              -ms-user-select: none;
+              user-select: none;
+            }
+            
+            input, textarea {
+              -webkit-user-select: text;
+              -moz-user-select: text;
+              -ms-user-select: text;
+              user-select: text;
+            }
+            
+            @media print {
+              * { display: none !important; }
+            }
+            
+            /* Prevent context menu */
+            body {
+              -webkit-touch-callout: none;
+              -webkit-user-select: none;
+              -khtml-user-select: none;
+              -moz-user-select: none;
+              -ms-user-select: none;
+              user-select: none;
+            }
+          `,
+          }}
+        />
+      </head>
       <body className={`font-sans ${GeistSans.variable} ${GeistMono.variable}`}>
         <Suspense fallback={<div>Loading...</div>}>{children}</Suspense>
         <Analytics />
