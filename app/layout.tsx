@@ -9,9 +9,11 @@ import "./globals.css"
 export const metadata: Metadata = {
   title: "Echo - WebRTC Room App",
   description: "Real-time video chat and file sharing",
+  generator: "v0.app",
   other: {
     screenshot: "disabled",
     "screen-capture": "disabled",
+    "format-detection": "telephone=no",
   },
 }
 
@@ -23,13 +25,22 @@ export default function RootLayout({
   return (
     <html lang="en">
       <head>
+        <meta
+          name="viewport"
+          content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+        />
         <meta name="screenshot" content="disabled" />
         <meta name="screen-capture" content="disabled" />
         <meta name="format-detection" content="telephone=no" />
+        <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+        <meta name="mobile-web-app-capable" content="yes" />
+        <meta name="theme-color" content="#4B2E2E" />
+
         <style
           dangerouslySetInnerHTML={{
             __html: `
-            /* Prevent screenshot and screen recording */
+            /* Enhanced screenshot and screen recording prevention */
             * {
               -webkit-touch-callout: none;
               -webkit-user-select: none;
@@ -37,6 +48,7 @@ export default function RootLayout({
               -moz-user-select: none;
               -ms-user-select: none;
               user-select: none;
+              -webkit-app-region: no-drag;
             }
             
             input, textarea {
@@ -46,11 +58,28 @@ export default function RootLayout({
               user-select: text;
             }
             
-            @media print {
-              * { display: none !important; }
+            /* Prevent screenshot on mobile */
+            @media screen and (-webkit-min-device-pixel-ratio: 0) {
+              body {
+                -webkit-user-select: none;
+                -webkit-touch-callout: none;
+              }
             }
             
-            /* Prevent context menu */
+            /* Hide content during print/screenshot attempts */
+            @media print {
+              * { 
+                display: none !important; 
+                visibility: hidden !important;
+              }
+              body::before {
+                content: "Screenshot disabled";
+                display: block !important;
+                visibility: visible !important;
+              }
+            }
+            
+            /* Prevent context menu and long press */
             body {
               -webkit-touch-callout: none;
               -webkit-user-select: none;
@@ -58,6 +87,15 @@ export default function RootLayout({
               -moz-user-select: none;
               -ms-user-select: none;
               user-select: none;
+              overscroll-behavior: none;
+            }
+            
+            /* Mobile-specific optimizations */
+            @media (max-width: 768px) {
+              body {
+                overflow-x: hidden;
+                -webkit-overflow-scrolling: touch;
+              }
             }
           `,
           }}
