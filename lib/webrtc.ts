@@ -41,10 +41,11 @@ export class WebRTCManager {
   }
 
   private setupSocketListeners() {
-    this.socket.on("user-joined", (data: { clientId: string; displayName: string }) => {
+    this.socket.on("user-joined", (data: { clientId: string; displayName?: string }) => {
       console.log("[v0] User joined:", data.clientId)
       if (data.clientId !== this.clientId) {
-        this.addParticipant(data.clientId, data.displayName)
+        const displayName = data.displayName || `User ${data.clientId.slice(0, 8)}`
+        this.addParticipant(data.clientId, displayName)
         setTimeout(() => this.createPeerConnection(data.clientId, true), 2000)
       }
     })
@@ -81,7 +82,7 @@ export class WebRTCManager {
       await this.handleIceCandidate(data.from, data.candidate)
     })
 
-    this.socket.on("participants-list", (participants: Array<{ clientId: string; displayName: string }>) => {
+    this.socket.on("participants-list", (participants: Array<{ clientId: string; displayName?: string }>) => {
       console.log("[v0] Received participants list:", participants)
       this.updateParticipantsList(participants)
       const otherParticipants = participants.filter((p) => p.clientId !== this.clientId)
@@ -101,9 +102,15 @@ export class WebRTCManager {
   }
 
   private addParticipant(clientId: string, displayName: string) {
+    if (!clientId || typeof clientId !== "string") {
+      console.error("[v0] Invalid clientId provided to addParticipant:", clientId)
+      return
+    }
+
+    const safeName = displayName && typeof displayName === "string" ? displayName : `User ${clientId.slice(0, 8)}`
     this.participants.set(clientId, {
       clientId,
-      displayName,
+      displayName: safeName,
       isConnected: true,
     })
     this.notifyParticipantUpdate()
@@ -126,13 +133,21 @@ export class WebRTCManager {
     this.notifyParticipantUpdate()
   }
 
-  private updateParticipantsList(participants: Array<{ clientId: string; displayName: string }>) {
+  private updateParticipantsList(participants: Array<{ clientId: string; displayName?: string }>) {
     this.participants.clear()
+    if (!Array.isArray(participants)) {
+      console.error("[v0] Invalid participants array:", participants)
+      this.notifyParticipantUpdate()
+      return
+    }
+
     participants.forEach((p) => {
-      if (p.clientId !== this.clientId) {
+      if (p && p.clientId && typeof p.clientId === "string" && p.clientId !== this.clientId) {
+        const safeName =
+          p.displayName && typeof p.displayName === "string" ? p.displayName : `User ${p.clientId.slice(0, 8)}`
         this.participants.set(p.clientId, {
           clientId: p.clientId,
-          displayName: p.displayName,
+          displayName: safeName,
           isConnected: true,
         })
       }
@@ -443,5 +458,70 @@ export class WebRTCManager {
     this.peerConnections.clear()
 
     this.participants.clear()
+  }
+
+  async sendFile(file: File, senderId: string): Promise<void> {
+    const openChannels = Array.from(this.dataChannels.values()).filter((dc) => dc.readyState === "open")
+    const totalChannels = this.dataChannels.size
+
+    console.log(
+      `[v0] Attempting to send file. Connected channels: ${openChannels.length}, Open channels: ${openChannels.length}`,
+    )
+
+    if (openChannels.length === 0) {
+      throw new Error(
+        `No connected peers to send file to. Connected channels: ${openChannels.length}, Open channels: ${totalChannels}`,
+      )
+    }
+
+    const fileData = await file.arrayBuffer()
+    const chunkSize = 16384 // 16KB chunks
+    const totalChunks = Math.ceil(fileData.byteLength / chunkSize)
+
+    const fileInfo = {
+      id: crypto.randomUUID(),
+      name: file.name,
+      type: file.type,
+      size: file.size,
+      totalChunks,
+      sender: senderId,
+      timestamp: new Date().toISOString(),
+    }
+
+    // Send file info to all connected peers
+    openChannels.forEach((dc) => {
+      try {
+        dc.send(JSON.stringify({ type: "file-info", data: fileInfo }))
+      } catch (error) {
+        console.error("[v0] Error sending file info:", error)
+      }
+    })
+
+    // Send file chunks
+    for (let i = 0; i < totalChunks; i++) {
+      const start = i * chunkSize
+      const end = Math.min(start + chunkSize, fileData.byteLength)
+      const chunk = fileData.slice(start, end)
+
+      const chunkData = {
+        fileId: fileInfo.id,
+        chunkIndex: i,
+        totalChunks,
+        data: Array.from(new Uint8Array(chunk)),
+      }
+
+      openChannels.forEach((dc) => {
+        try {
+          if (dc.readyState === "open") {
+            dc.send(JSON.stringify({ type: "file-chunk", data: chunkData }))
+          }
+        } catch (error) {
+          console.error("[v0] Error sending file chunk:", error)
+        }
+      })
+
+      // Small delay between chunks to prevent overwhelming
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
   }
 }
