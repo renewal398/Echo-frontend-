@@ -40,7 +40,6 @@ export default function RoomPage() {
 
     return paramRoomId || queryRoomId || crypto.randomUUID()
   }
-
   const roomId = getRoomId()
   const [messages, setMessages] = useState<Message[]>([])
   const [newMessage, setNewMessage] = useState("")
