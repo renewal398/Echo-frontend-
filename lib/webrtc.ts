@@ -46,7 +46,11 @@ export class WebRTCManager {
       if (data.clientId !== this.clientId) {
         const displayName = data.displayName || `User ${data.clientId.slice(0, 8)}`
         this.addParticipant(data.clientId, displayName)
-        setTimeout(() => this.createPeerConnection(data.clientId, true), 2000)
+        setTimeout(() => {
+          if (!this.peerConnections.has(data.clientId)) {
+            this.createPeerConnection(data.clientId, true)
+          }
+        }, 1000)
       }
     })
 
@@ -58,28 +62,17 @@ export class WebRTCManager {
     this.socket.on("signal", async (data: { from: string; signal: any }) => {
       console.log("[v0] Received signal from:", data.from, "type:", data.signal.type)
 
-      if (data.signal.type === "offer") {
-        await this.handleOffer(data.from, data.signal)
-      } else if (data.signal.type === "answer") {
-        await this.handleAnswer(data.from, data.signal)
-      } else if (data.signal.candidate) {
-        await this.handleIceCandidate(data.from, data.signal)
+      try {
+        if (data.signal.type === "offer") {
+          await this.handleOffer(data.from, data.signal)
+        } else if (data.signal.type === "answer") {
+          await this.handleAnswer(data.from, data.signal)
+        } else if (data.signal.candidate) {
+          await this.handleIceCandidate(data.from, data.signal)
+        }
+      } catch (error) {
+        console.error("[v0] Error handling signal:", error)
       }
-    })
-
-    this.socket.on("webrtc-offer", async (data: { from: string; offer: RTCSessionDescriptionInit }) => {
-      console.log("[v0] Received offer from:", data.from)
-      await this.handleOffer(data.from, data.offer)
-    })
-
-    this.socket.on("webrtc-answer", async (data: { from: string; answer: RTCSessionDescriptionInit }) => {
-      console.log("[v0] Received answer from:", data.from)
-      await this.handleAnswer(data.from, data.answer)
-    })
-
-    this.socket.on("webrtc-ice-candidate", async (data: { from: string; candidate: RTCIceCandidateInit }) => {
-      console.log("[v0] Received ICE candidate from:", data.from)
-      await this.handleIceCandidate(data.from, data.candidate)
     })
 
     this.socket.on("participants-list", (participants: Array<{ clientId: string; displayName?: string }>) => {
@@ -91,11 +84,11 @@ export class WebRTCManager {
       otherParticipants.forEach((p) => {
         if (!this.peerConnections.has(p.clientId)) {
           setTimeout(() => {
-            if (!this.peerConnections.has(p.clientId)) {
+            if (!this.peerConnections.has(p.clientId) && this.participants.has(p.clientId)) {
               console.log("[v0] Creating delayed connection to:", p.clientId)
               this.createPeerConnection(p.clientId, true)
             }
-          }, 1000)
+          }, 500)
         }
       })
     })
@@ -204,11 +197,6 @@ export class WebRTCManager {
 
     pc.onicecandidate = (event) => {
       if (event.candidate) {
-        this.socket.emit("webrtc-ice-candidate", {
-          to: remoteClientId,
-          candidate: event.candidate.toJSON(),
-        })
-
         this.socket.emit("signal", {
           to: remoteClientId,
           signal: event.candidate.toJSON(),
@@ -218,13 +206,21 @@ export class WebRTCManager {
 
     pc.onconnectionstatechange = () => {
       console.log("[v0] Connection state with", remoteClientId, ":", pc.connectionState)
-      if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
+      if (pc.connectionState === "failed") {
+        console.log("[v0] Connection failed with:", remoteClientId, "- cleaning up")
+        this.peerConnections.delete(remoteClientId)
+        pc.close()
+
+        // Attempt reconnection after cleanup
         setTimeout(() => {
           if (this.participants.has(remoteClientId) && !this.peerConnections.has(remoteClientId)) {
             console.log("[v0] Attempting to reconnect to:", remoteClientId)
             this.createPeerConnection(remoteClientId, true)
           }
-        }, 2000)
+        }, 3000)
+      } else if (pc.connectionState === "disconnected") {
+        console.log("[v0] Connection disconnected with:", remoteClientId, "- waiting for reconnection")
+        // Don't immediately reconnect on disconnect, wait for failed state
       }
     }
 
@@ -234,8 +230,17 @@ export class WebRTCManager {
         this.setupDataChannel(dataChannel, remoteClientId)
         this.dataChannels.set(remoteClientId, dataChannel)
         console.log("[v0] Created data channel for:", remoteClientId)
+
+        const offer = await pc.createOffer()
+        await pc.setLocalDescription(offer)
+
+        this.socket.emit("signal", {
+          to: remoteClientId,
+          signal: offer,
+        })
+        console.log("[v0] Sent offer to:", remoteClientId)
       } catch (error) {
-        console.error("[v0] Error creating data channel:", error)
+        console.error("[v0] Error creating offer:", error)
       }
     }
 
@@ -252,6 +257,7 @@ export class WebRTCManager {
     }
 
     dataChannel.onmessage = (event) => {
+      console.log("[v0] Received message:", event.data)
       this.handleDataChannelMessage(event.data)
     }
 
@@ -275,11 +281,6 @@ export class WebRTCManager {
       await pc.setRemoteDescription(offer)
       const answer = await pc.createAnswer()
       await pc.setLocalDescription(answer)
-
-      this.socket.emit("webrtc-answer", {
-        to: from,
-        answer: answer,
-      })
 
       this.socket.emit("signal", {
         to: from,
@@ -522,6 +523,22 @@ export class WebRTCManager {
 
       // Small delay between chunks to prevent overwhelming
       await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+  }
+
+  private handleDataChannelMessage(data: string) {
+    try {
+      const message = JSON.parse(data)
+
+      if (message.type === "file-info") {
+        console.log("[v0] Received file info:", message.data.name)
+        // Handle file info
+      } else if (message.type === "file-chunk") {
+        console.log("[v0] Received file chunk:", message.data.chunkIndex)
+        // Handle file chunk
+      }
+    } catch (error) {
+      console.error("[v0] Error parsing data channel message:", error)
     }
   }
 }
